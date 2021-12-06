@@ -1,6 +1,10 @@
 package ch.heigvd.iict.mac.evaluation;
 
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.CharArraySet;
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
+import org.apache.lucene.analysis.en.EnglishAnalyzer;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;
@@ -9,6 +13,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class Evaluation {
     private static void readFile(String filename, Function<String, Void> parseLine)
@@ -114,10 +119,11 @@ public class Evaluation {
         ///
         // TODO student: replace the null values with the correct analyzers
         var analyzers = List.of(
-              new NamedAnalyzer("Standard", null),
-              new NamedAnalyzer("Whitespace", null),
-              new NamedAnalyzer("English", null),
-              new NamedAnalyzer("English with custom stopwords", null)
+              new NamedAnalyzer("Standard", new StandardAnalyzer()),
+              new NamedAnalyzer("Whitespace", new WhitespaceAnalyzer()),
+              new NamedAnalyzer("English", new EnglishAnalyzer()),
+              new NamedAnalyzer("English with custom stopwords",
+                      new EnglishAnalyzer(new CharArraySet(commonWords, true)))
         );
 
         for(NamedAnalyzer na : analyzers) {
@@ -137,7 +143,6 @@ public class Evaluation {
                 evaluateMetrics(labIndex, queries, qrels);
             }
         }
-
     }
 
     private static void evaluateMetrics(LabIndex labIndex, List<String> queries, Map<Integer, List<Integer>> qrels) {
@@ -157,6 +162,7 @@ public class Evaluation {
         //  - The true query results from qrels file i.e. genuine documents
         //    returned matching a query
         //         List<Integer> qrelResults = qrels.get(queryNumber);
+        //
 
         int queryNumber = 0;
         int totalRelevantDocs = 0;
@@ -171,6 +177,74 @@ public class Evaluation {
         // average precision at the 11 recall levels (0,0.1,0.2,...,1) over all queries
         double[] avgPrecisionAtRecallLevels = createZeroedRecalls();
 
+        for (String query : queries) {
+            List<Integer> queryResults = labIndex.search(query);
+            List<Integer> qrelResults = qrels.get(queryNumber + 1);
+
+            // Intersection
+            List<Integer> retrievedRelevantDocs = qrelResults.stream()
+                    .filter(queryResults::contains)
+                    .collect(Collectors.toList());
+
+            int nbRetrievedDocs = queryResults.size();
+            int nbRelevantDocs = qrelResults.size();
+            int nbRetrievedRelevantDocs = retrievedRelevantDocs.size();
+            totalRetrievedDocs += nbRetrievedDocs;
+            totalRelevantDocs += nbRelevantDocs;
+            totalRetrievedRelevantDocs += nbRetrievedRelevantDocs;
+
+            double queryPrecision = (double) retrievedRelevantDocs.size() / (double) queryResults.size();
+            double queryRecall = (double) retrievedRelevantDocs.size() / (double) qrelResults.size();
+            avgPrecision += queryPrecision;
+            avgRecall += queryRecall;
+
+            int nbLocalRelevantDoc = 0;
+            int nbLocalRetrievedDoc = 0;
+            double localPrecision = 0;
+            double localRecall = 0;
+            double localAveragePrecision = 0;
+            double localRPrecision = 0;
+            double[] localPrecisionAtRecallLevels = createZeroedRecalls();
+
+            for(Integer doc : retrievedRelevantDocs) {
+
+                nbLocalRetrievedDoc++;
+                if(qrelResults.contains(doc)) {
+                    nbLocalRelevantDoc++;
+                    localPrecision = ((double) nbLocalRelevantDoc / (double) nbLocalRetrievedDoc);
+                    localAveragePrecision += localPrecision;
+                } else {
+                    localPrecision = ((double) nbLocalRelevantDoc / (double) nbLocalRetrievedDoc);
+                }
+
+                localRecall = ((double) nbLocalRelevantDoc / (double) nbRelevantDocs);
+
+                for( int i = 10; i >= 0 && ( (double) i / 10 ) <= localRecall; i--) {
+                    if(localPrecision >= localPrecisionAtRecallLevels[i]) {
+                        localPrecisionAtRecallLevels[i] = localPrecision;
+                    }
+                }
+
+                if(nbLocalRetrievedDoc == nbRelevantDocs) {
+                    localRPrecision = ((double) nbLocalRelevantDoc / (double) nbRelevantDocs);
+                }
+            }
+            localAveragePrecision /= nbRelevantDocs;
+            meanAveragePrecision += localAveragePrecision;
+
+            for(int i = 0; i <= 10; i++) {
+                avgPrecisionAtRecallLevels[i] = localPrecisionAtRecallLevels[i];
+            }
+        }
+
+        avgPrecision /= queries.size();
+        avgRecall /= queries.size();
+        fMeasure = (2 * avgPrecision * avgRecall) / (avgPrecision + avgRecall);
+        meanAveragePrecision /= queries.size();
+
+        for(int i = 0; i <= 10; i++) {
+            avgPrecisionAtRecallLevels[i] /= queries.size();
+        }
 
         ///
         ///  Part IV - Display the metrics
