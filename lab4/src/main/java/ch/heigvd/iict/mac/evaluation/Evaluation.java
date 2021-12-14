@@ -13,7 +13,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 public class Evaluation {
     private static void readFile(String filename, Function<String, Void> parseLine)
@@ -179,66 +178,61 @@ public class Evaluation {
 
         for (String query : queries) {
             List<Integer> queryResults = labIndex.search(query);
-            List<Integer> qrelResults = qrels.get(queryNumber + 1);
+            List<Integer> qrelResults = ( qrels.get(queryNumber + 1) == null ? new LinkedList<>() : qrels.get(queryNumber + 1) );
 
-            // Intersection
-            List<Integer> retrievedRelevantDocs = qrelResults.stream()
-                    .filter(queryResults::contains)
-                    .collect(Collectors.toList());
+            int queryRetrievedDocs = queryResults.size();
+            int queryRelevantDocs = qrelResults.size();
+            int queryRetrievedRelevantDocs = 0;
 
-            int nbRetrievedDocs = queryResults.size();
-            int nbRelevantDocs = qrelResults.size();
-            int nbRetrievedRelevantDocs = retrievedRelevantDocs.size();
-            totalRetrievedDocs += nbRetrievedDocs;
-            totalRelevantDocs += nbRelevantDocs;
-            totalRetrievedRelevantDocs += nbRetrievedRelevantDocs;
-
-            double queryPrecision = (double) retrievedRelevantDocs.size() / (double) queryResults.size();
-            double queryRecall = (double) retrievedRelevantDocs.size() / (double) qrelResults.size();
-            avgPrecision += queryPrecision;
-            avgRecall += queryRecall;
-
-            int nbLocalRelevantDoc = 0;
-            int nbLocalRetrievedDoc = 0;
-            double localPrecision = 0;
-            double localRecall = 0;
-            double localAveragePrecision = 0;
-            double localRPrecision = 0;
-            double[] localPrecisionAtRecallLevels = createZeroedRecalls();
-
-            for(Integer doc : retrievedRelevantDocs) {
-
-                nbLocalRetrievedDoc++;
-                if(qrelResults.contains(doc)) {
-                    nbLocalRelevantDoc++;
-                    localPrecision = ((double) nbLocalRelevantDoc / (double) nbLocalRetrievedDoc);
-                    localAveragePrecision += localPrecision;
-                } else {
-                    localPrecision = ((double) nbLocalRelevantDoc / (double) nbLocalRetrievedDoc);
+            double queryAveragePrecision = 0;
+            double queryRPrecision = 0;
+            double[] queryPrecisionAtRecallLevels = createZeroedRecalls();
+            for( int retrievedDocI = 0 ; retrievedDocI < queryResults.size() ; retrievedDocI++)
+            {
+                // AP
+                if(qrelResults.contains(queryResults.get(retrievedDocI))) {
+                    queryRetrievedRelevantDocs++;
+                    queryAveragePrecision += ( (double)queryRetrievedRelevantDocs /  (retrievedDocI + 1.));
                 }
 
-                localRecall = ((double) nbLocalRelevantDoc / (double) nbRelevantDocs);
+                // R-Precision
+                if ( queryRelevantDocs > 0 && retrievedDocI == (queryRelevantDocs - 1) ) {
+                    queryRPrecision = (double) queryRetrievedRelevantDocs / (double) queryRelevantDocs;
+                }
 
-                for( int i = 10; i >= 0 && ( (double) i / 10 ) <= localRecall; i--) {
-                    if(localPrecision >= localPrecisionAtRecallLevels[i]) {
-                        localPrecisionAtRecallLevels[i] = localPrecision;
+                // Interpolated precision
+                double localRecall = ( queryRelevantDocs == 0 ? 0 : (double) queryRetrievedRelevantDocs / (double)queryRelevantDocs);
+                double localPrecision =  ( queryRetrievedRelevantDocs == 0 ? 0 : (double) queryRetrievedRelevantDocs / ( retrievedDocI + 1.));
+                for( int i = 0; i <= 10 && (((double) i / 10 ) <= localRecall); i++) {
+                    if(localPrecision > queryPrecisionAtRecallLevels[i]) {
+                        queryPrecisionAtRecallLevels[i] = localPrecision;
                     }
                 }
-
-                if(nbLocalRetrievedDoc == nbRelevantDocs) {
-                    localRPrecision = ((double) nbLocalRelevantDoc / (double) nbRelevantDocs);
-                }
             }
-            localAveragePrecision /= nbRelevantDocs;
-            meanAveragePrecision += localAveragePrecision;
+            queryAveragePrecision = ( queryRelevantDocs == 0 ? 0 : queryAveragePrecision / queryRelevantDocs);
+            meanAveragePrecision += queryAveragePrecision;
+
+            totalRetrievedDocs += queryRetrievedDocs;
+            totalRelevantDocs += queryRelevantDocs;
+            totalRetrievedRelevantDocs += queryRetrievedRelevantDocs;
+
+            avgPrecision += ( queryRetrievedDocs == 0 ? 0 : (double) queryRetrievedRelevantDocs / (double) queryRetrievedDocs );
+            avgRecall    += ( queryRelevantDocs  == 0 ? 0 : (double) queryRetrievedRelevantDocs / (double) queryRelevantDocs );
+
+            avgRPrecision += queryRPrecision;
 
             for(int i = 0; i <= 10; i++) {
-                avgPrecisionAtRecallLevels[i] = localPrecisionAtRecallLevels[i];
+                avgPrecisionAtRecallLevels[i] += queryPrecisionAtRecallLevels[i];
             }
+
+            queryNumber++;
         }
 
         avgPrecision /= queries.size();
         avgRecall /= queries.size();
+
+        avgRPrecision /= queries.size();
+
         fMeasure = (2 * avgPrecision * avgRecall) / (avgPrecision + avgRecall);
         meanAveragePrecision /= queries.size();
 
